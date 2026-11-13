@@ -1,0 +1,36 @@
+devenv-image-inspect quick reference
+====================================
+
+CLI
+  devenv-image-inspect meta <ref>
+  devenv-image-inspect history <ref>
+  devenv-image-inspect fs <ref> [path]
+  devenv-image-inspect cat <ref> <path>
+  devenv-image-inspect export <ref> [outdir]
+
+Vim / Neovim commands
+  :ImageInspect [ref]
+  :ImageMeta [ref]
+  :ImageHistory [ref]
+  :ImageFs [ref] [path]
+  :ImageExport [ref] [outdir]
+
+Keys (default)
+  <Leader>ii  inspect
+  <Leader>im  meta
+  <Leader>ih  history
+  <Leader>if  fs
+  <Leader>ie  export
+
+Fs browser buffer
+  <CR>  enter dir / open file
+  -     parent directory
+  q     close
+
+Neovim setup
+  require("image-inspect").setup()
+
+Env
+  DEVENV_IMAGE_INSPECT_DIR   repo root
+  DEVENV_IMAGE_ENGINE        podman|docker
+  DEVENV_IMAGE_FS_MAXDEPTH   find depth (default 2)

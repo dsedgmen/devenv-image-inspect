@@ -1,0 +1,64 @@
+name: RPM
+
+on:
+  push:
+    branches: [main, "release/**", "release-*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rpmbuild:
+    name: Build RPM (${{ github.ref_name }})
+    runs-on: ubuntu-24.04
+    container: fedora:latest
+    steps:
+      - name: Install build tools
+        run: dnf install -y git rpm-build rpmdevtools
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Resolve version, build, and stage RPMs
+        id: ver
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          chmod +x ./scripts/rpm-version.sh bin/devenv-image-inspect install.sh
+          eval "$(./scripts/rpm-version.sh --shell)"
+          ./scripts/rpm-version.sh
+          {
+            echo "version=${VERSION}"
+            echo "release=${RELEASE}"
+            echo "channel=${CHANNEL}"
+          } >> "$GITHUB_OUTPUT"
+
+          mkdir -p ~/rpmbuild/SOURCES ~/rpmbuild/SPECS dist
+          mkdir -p "/tmp/pack/devenv-image-inspect-${VERSION}"
+          cp -a bin plugin autoload lua rpm README.md QUICKREF.txt LICENSE \
+            "/tmp/pack/devenv-image-inspect-${VERSION}/"
+          tar -C /tmp/pack -czf ~/rpmbuild/SOURCES/devenv-image-inspect-${VERSION}.tar.gz \
+            "devenv-image-inspect-${VERSION}"
+          cp devenv-image-inspect.spec ~/rpmbuild/SPECS/
+
+          rpmbuild -ba ~/rpmbuild/SPECS/devenv-image-inspect.spec \
+            --define "devenv_fc_ver ${VERSION}" \
+            --define "devenv_fc_rel ${RELEASE}"
+          cp -a ~/rpmbuild/RPMS/*/*.rpm ~/rpmbuild/SRPMS/*.rpm dist/
+          echo "Built ${CHANNEL}: devenv-image-inspect-${VERSION}-${RELEASE}"
+          ls -la dist/
+          rpm -qpl dist/devenv-image-inspect-neovim-*.rpm
+          rpm -qpl dist/devenv-image-inspect-vim-*.rpm
+
+      - name: Upload RPMs
+        uses: actions/upload-artifact@v5
+        with:
+          name: devenv-image-inspect-${{ steps.ver.outputs.channel }}-${{ steps.ver.outputs.version }}-${{ github.run_number }}
+          path: dist/*

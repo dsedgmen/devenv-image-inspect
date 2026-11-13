@@ -1,0 +1,275 @@
+#!/usr/bin/env bash
+# devenv-image-inspect — browse/export container image metadata, history, filesystem.
+# Podman-first; falls back to docker.
+set -euo pipefail
+
+PROG="$(basename "$0")"
+FS_MAXDEPTH="${DEVENV_IMAGE_FS_MAXDEPTH:-2}"
+
+usage() {
+  cat <<EOF
+Usage: $PROG <command> <image-ref> [args...]
+
+Commands:
+  meta <ref>              Image config/labels/env (pretty JSON)
+  history <ref>           Layer history + Dockerfile.recovered text
+  fs <ref> [path]         Directory listing (default /, depth $FS_MAXDEPTH)
+  cat <ref> <path>        File contents from image
+  export <ref> <outdir>   Write meta.json, history.txt, Dockerfile.recovered, rootfs/
+
+Environment:
+  DEVENV_IMAGE_ENGINE       Force engine: podman | docker
+  DEVENV_IMAGE_FS_MAXDEPTH  Max find depth for fs (default 2)
+EOF
+}
+
+die() {
+  echo "$PROG: $*" >&2
+  exit 1
+}
+
+resolve_engine() {
+  if [[ -n "${DEVENV_IMAGE_ENGINE:-}" ]]; then
+    command -v "$DEVENV_IMAGE_ENGINE" >/dev/null 2>&1 ||
+      die "DEVENV_IMAGE_ENGINE=$DEVENV_IMAGE_ENGINE not found on PATH"
+    echo "$DEVENV_IMAGE_ENGINE"
+    return
+  fi
+  if command -v podman >/dev/null 2>&1; then
+    echo podman
+  elif command -v docker >/dev/null 2>&1; then
+    echo docker
+  else
+    die "neither podman nor docker found on PATH"
+  fi
+}
+
+ENGINE="$(resolve_engine)"
+
+require_ref() {
+  [[ -n "${1:-}" ]] || die "image ref required"
+}
+
+require_image() {
+  local ref="$1"
+  if ! "$ENGINE" image inspect "$ref" >/dev/null 2>&1; then
+    die "image not found locally: $ref (pull it first)"
+  fi
+}
+
+safe_name() {
+  echo "$1" | tr '/:' '__' | tr -cd '[:alnum:]._-' | cut -c1-64
+}
+
+cmd_meta() {
+  local ref="$1"
+  require_ref "$ref"
+  require_image "$ref"
+  "$ENGINE" image inspect "$ref" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+img = data[0] if isinstance(data, list) else data
+cfg = img.get("Config") or img.get("ContainerConfig") or {}
+out = {
+  "Id": img.get("Id"),
+  "RepoTags": img.get("RepoTags"),
+  "RepoDigests": img.get("RepoDigests"),
+  "Created": img.get("Created"),
+  "Architecture": img.get("Architecture"),
+  "Os": img.get("Os"),
+  "Size": img.get("Size"),
+  "Author": img.get("Author"),
+  "Config": {
+    "User": cfg.get("User"),
+    "Env": cfg.get("Env"),
+    "Cmd": cfg.get("Cmd"),
+    "Entrypoint": cfg.get("Entrypoint"),
+    "WorkingDir": cfg.get("WorkingDir"),
+    "Labels": cfg.get("Labels"),
+    "ExposedPorts": cfg.get("ExposedPorts"),
+    "Volumes": cfg.get("Volumes"),
+    "StopSignal": cfg.get("StopSignal"),
+  },
+  "RootFS": img.get("RootFS"),
+}
+print(json.dumps(out, indent=2, sort_keys=False))
+'
+}
+
+history_raw() {
+  local ref="$1"
+  if "$ENGINE" history --no-trunc --format '{{.ID}}\t{{.CreatedBy}}\t{{.Size}}\t{{.CreatedAt}}' "$ref" 2>/dev/null; then
+    return 0
+  fi
+  "$ENGINE" history --no-trunc "$ref"
+}
+
+recover_dockerfile() {
+  local ref="$1"
+  local tmp
+  tmp="$(mktemp)"
+  echo "# Recovered from image history: $ref"
+  echo "# Engine: $ENGINE"
+  echo ""
+  if ! "$ENGINE" history --no-trunc --format '{{.CreatedBy}}' "$ref" 2>/dev/null >"$tmp"; then
+    rm -f "$tmp"
+    die "failed to read history for $ref"
+  fi
+  # Oldest first for Dockerfile order
+  if command -v tac >/dev/null 2>&1; then
+    tac "$tmp" >"${tmp}.rev"
+  else
+    awk '{a[NR]=$0} END{for(i=NR;i>=1;i--) print a[i]}' "$tmp" >"${tmp}.rev"
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == "<missing>" || "$line" == "N/A" ]] && continue
+    line="${line#/bin/sh -c #(nop) }"
+    line="${line#/bin/sh -c #(nop)}"
+    line="${line#/bin/sh -c }"
+    # Drop BuildKit |N prefix
+    if [[ "$line" =~ ^\|[0-9]+[[:space:]]+(.*)$ ]]; then
+      line="${BASH_REMATCH[1]}"
+    fi
+    line="${line#"${line%%[![:space:]]*}"}"
+    if [[ "$line" =~ ^(ADD|COPY|ENV|EXPOSE|CMD|ENTRYPOINT|USER|WORKDIR|VOLUME|LABEL|ARG|ONBUILD|STOPSIGNAL|HEALTHCHECK|SHELL|RUN|FROM)([[:space:]]|$) ]]; then
+      echo "$line"
+    elif [[ "$line" == \#* ]]; then
+      echo "$line"
+    else
+      echo "RUN $line"
+    fi
+  done <"${tmp}.rev"
+  rm -f "$tmp" "${tmp}.rev"
+}
+
+cmd_history() {
+  local ref="$1"
+  require_ref "$ref"
+  require_image "$ref"
+  echo "=== history ($ENGINE) ==="
+  history_raw "$ref"
+  echo ""
+  echo "=== Dockerfile.recovered ==="
+  recover_dockerfile "$ref"
+}
+
+cmd_fs() {
+  local ref="$1"
+  local path="${2:-/}"
+  require_ref "$ref"
+  require_image "$ref"
+  [[ "$path" == /* ]] || path="/$path"
+  # Portable listing: mark dirs with trailing /
+  "$ENGINE" run --rm --entrypoint '' "$ref" sh -c '
+path="$1"
+depth="$2"
+cd "$path" 2>/dev/null || { echo "devenv-image-inspect: path not found: $path" >&2; exit 1; }
+# Print self
+case "$path" in
+  /) echo "d	/" ;;
+  */) echo "d	$path" ;;
+  *) echo "d	$path/" ;;
+esac
+find . -maxdepth "$depth" ! -name . 2>/dev/null | sort | while IFS= read -r p; do
+  p="${p#./}"
+  [ -z "$p" ] && continue
+  full="$path"
+  case "$full" in
+    /) full="/$p" ;;
+    */) full="${full}${p}" ;;
+    *) full="${full}/${p}" ;;
+  esac
+  if [ -d "$p" ]; then
+    echo "d	${full%/}/"
+  elif [ -L "$p" ]; then
+    echo "l	$full"
+  else
+    echo "f	$full"
+  fi
+done
+' _ "$path" "$FS_MAXDEPTH" || die "failed to list $path in $ref"
+}
+
+cmd_cat() {
+  local ref="$1"
+  local path="${2:-}"
+  require_ref "$ref"
+  [[ -n "$path" ]] || die "path required for cat"
+  require_image "$ref"
+  [[ "$path" == /* ]] || path="/$path"
+  "$ENGINE" run --rm --entrypoint '' "$ref" cat "$path" ||
+    die "failed to read $path from $ref"
+}
+
+cmd_export() {
+  local ref="$1"
+  local outdir="${2:-}"
+  require_ref "$ref"
+  require_image "$ref"
+  if [[ -z "$outdir" ]]; then
+    outdir="./image-export-$(safe_name "$ref")"
+  fi
+  mkdir -p "$outdir/rootfs"
+  echo "$PROG: exporting $ref → $outdir" >&2
+
+  cmd_meta "$ref" >"$outdir/meta.json"
+  {
+    history_raw "$ref"
+  } >"$outdir/history.txt"
+  recover_dockerfile "$ref" >"$outdir/Dockerfile.recovered"
+
+  local cid
+  cid="$("$ENGINE" create "$ref")"
+  cleanup() { "$ENGINE" rm -f "$cid" >/dev/null 2>&1 || true; }
+  trap cleanup EXIT
+  # Own as invoking user; do not preserve image execute bits on regular files
+  "$ENGINE" export "$cid" | tar --no-same-owner --no-same-permissions -C "$outdir/rootfs" -xf -
+  cleanup
+  trap - EXIT
+  # Dirs: traversable/deletable. Files: rw only (never executable — host safety).
+  find "$outdir/rootfs" -type d -exec chmod u+rwx {} + 2>/dev/null || true
+  find "$outdir/rootfs" -type f -exec chmod u+rw,a-x {} + 2>/dev/null || true
+
+  echo "$PROG: wrote $outdir/{meta.json,history.txt,Dockerfile.recovered,rootfs/}" >&2
+  echo "$outdir"
+}
+
+main() {
+  local cmd="${1:-}"
+  shift || true
+  case "$cmd" in
+    meta)
+      cmd_meta "${1:-}"
+      ;;
+    history)
+      cmd_history "${1:-}"
+      ;;
+    fs)
+      local fs_ref="${1:-}"
+      shift || true
+      cmd_fs "$fs_ref" "$@"
+      ;;
+    cat)
+      local cat_ref="${1:-}"
+      shift || true
+      cmd_cat "$cat_ref" "$@"
+      ;;
+    export)
+      local exp_ref="${1:-}"
+      shift || true
+      cmd_export "$exp_ref" "$@"
+      ;;
+    -h|--help|help)
+      usage
+      ;;
+    "")
+      usage
+      exit 1
+      ;;
+    *)
+      die "unknown command: $cmd (try --help)"
+      ;;
+  esac
+}
+
+main "$@"

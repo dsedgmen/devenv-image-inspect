@@ -1,0 +1,13 @@
+---
+description: devenv-image-inspect agent constraints
+globs:
+alwaysApply: true
+---
+
+# devenv-image-inspect
+
+- CLI in `bin/devenv-image-inspect` owns podman/docker; editors only shell out.
+- Keep command names: ImageInspect, ImageMeta, ImageHistory, ImageFs, ImageExport.
+- Neovim module: `require("image-inspect")` + `setup()`.
+- Do not commit secrets. Do not pull remote images implicitly.
+- Packaging: VERSION + scripts/rpm-version.sh + COPR make_srpm pattern.

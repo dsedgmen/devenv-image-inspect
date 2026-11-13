@@ -1,0 +1,17 @@
+# Secrets / credentials (never commit)
+.env
+.env.*
+!.env.example
+*.token
+*.pem
+*.key
+
+# Editor / tooling
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+dist/
+*.rpm
