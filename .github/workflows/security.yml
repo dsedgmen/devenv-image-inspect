@@ -17,8 +17,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y shellcheck
-      - run: |
-          shellcheck bin/devenv-image-inspect install.sh scripts/rpm-version.sh
+      - name: ShellCheck scripts and CLI
+        run: |
+          set -euo pipefail
+          find . -name '*.sh' -print0 | xargs -0 -r shellcheck
+          # CLI has no .sh suffix
+          shellcheck bin/devenv-image-inspect
 
   syntax:
     name: Script and editor config syntax
@@ -26,18 +30,49 @@ jobs:
     container: fedora:latest
     steps:
       - name: Install tools
-        run: dnf install -y git neovim vim-enhanced
+        run: dnf install -y git lua neovim vim-enhanced ShellCheck
       - uses: actions/checkout@v5
-      - name: bash -n + nvim/vim load
+      - name: bash -n + luac + CLI + nvim/vim load
         run: |
           set -euo pipefail
           chmod +x bin/devenv-image-inspect install.sh scripts/rpm-version.sh
-          bash -n bin/devenv-image-inspect install.sh scripts/rpm-version.sh
+          find . -name '*.sh' -print0 | xargs -0 -r bash -n
+          bash -n bin/devenv-image-inspect
+          luac -p lua/image-inspect.lua
+          ./bin/devenv-image-inspect --help >/dev/null
+          ./scripts/rpm-version.sh --shell >/dev/null
+          # Neovim: lua/ on rtp via repo root
           nvim --headless -u NONE -i NONE \
             -c 'set rtp+=.' \
             -c 'lua require("image-inspect").setup({map_keys=false})' \
+            -c 'lua assert(vim.fn.exists(":ImageInspect") ~= 0)' \
             -c quit
+          # Vim: plugin + autoload on rtp
           vim -Nu NONE -e -s \
             --cmd 'set rtp+=.' \
             -c 'runtime! plugin/image-inspect.vim' \
+            -c 'if !exists(":ImageInspect") | cquit 1 | endif' \
             -c quit
+
+  # Light static glance at packaging / install modes (no secrets)
+  packaging-perms:
+    name: Packaging permission sanity
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Only CLI/scripts should be executable in git
+        run: |
+          set -euo pipefail
+          # Fail if unexpected paths are mode +x in the index
+          bad=$(git ls-files -s | awk '$1 ~ /^100755$/ {print $4}' \
+            | grep -Ev '^(bin/devenv-image-inspect|install\.sh|scripts/rpm-version\.sh)$' || true)
+          if [ -n "$bad" ]; then
+            echo "Unexpected executable tracked files:" >&2
+            echo "$bad" >&2
+            exit 1
+          fi
+          # Spec/install must use 0644 for editor sources
+          grep -E 'install -m 0644.*(plugin|autoload|lua|README|QUICKREF|rpm/)' devenv-image-inspect.spec
+          grep -E 'install -m 0755.*bin/devenv-image-inspect' devenv-image-inspect.spec
+          grep -E 'install -m 0644' install.sh
+          grep -E 'install -m 0755.*devenv-image-inspect' install.sh

@@ -160,6 +160,8 @@ cmd_fs() {
   require_image "$ref"
   [[ "$path" == /* ]] || path="/$path"
   # Portable listing: mark dirs with trailing /
+  # Script body is single-quoted on purpose; path/depth arrive as $1/$2 below.
+  # shellcheck disable=SC2016
   "$ENGINE" run --rm --entrypoint '' "$ref" sh -c '
 path="$1"
 depth="$2"

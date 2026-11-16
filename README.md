@@ -1,5 +1,11 @@
 # devenv-image-inspect
 
+[![RPM](https://github.com/dsedgmen/devenv-image-inspect/actions/workflows/rpm.yml/badge.svg)](https://github.com/dsedgmen/devenv-image-inspect/actions/workflows/rpm.yml)
+[![Security](https://github.com/dsedgmen/devenv-image-inspect/actions/workflows/security.yml/badge.svg)](https://github.com/dsedgmen/devenv-image-inspect/actions/workflows/security.yml)
+[![Release](https://github.com/dsedgmen/devenv-image-inspect/actions/workflows/release.yml/badge.svg)](https://github.com/dsedgmen/devenv-image-inspect/actions/workflows/release.yml)
+[![COPR](https://copr.fedorainfracloud.org/coprs/dsedgmen/devenv/package/devenv-image-inspect/status_image/last_build.png)](https://copr.fedorainfracloud.org/coprs/dsedgmen/devenv/package/devenv-image-inspect/)
+[![GitHub release](https://img.shields.io/github/v/release/dsedgmen/devenv-image-inspect?include_prereleases)](https://github.com/dsedgmen/devenv-image-inspect/releases)
+
 Browse and export **container image** metadata, build history, and filesystem
 from **Vim** and **Neovim**. Podman-first (docker fallback).
 
