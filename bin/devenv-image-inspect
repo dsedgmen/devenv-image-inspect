@@ -28,6 +28,10 @@ die() {
   exit 1
 }
 
+# Lazily resolved so --help works without podman/docker (CI syntax jobs).
+# Must be set via ensure_engine in the current shell (not only in $(...); that is a subshell).
+ENGINE=""
+
 resolve_engine() {
   if [[ -n "${DEVENV_IMAGE_ENGINE:-}" ]]; then
     command -v "$DEVENV_IMAGE_ENGINE" >/dev/null 2>&1 ||
@@ -44,7 +48,11 @@ resolve_engine() {
   fi
 }
 
-ENGINE="$(resolve_engine)"
+ensure_engine() {
+  if [[ -z "$ENGINE" ]]; then
+    ENGINE="$(resolve_engine)"
+  fi
+}
 
 require_ref() {
   [[ -n "${1:-}" ]] || die "image ref required"
@@ -52,6 +60,7 @@ require_ref() {
 
 require_image() {
   local ref="$1"
+  ensure_engine
   if ! "$ENGINE" image inspect "$ref" >/dev/null 2>&1; then
     die "image not found locally: $ref (pull it first)"
   fi
