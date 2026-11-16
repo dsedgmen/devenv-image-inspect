@@ -15,7 +15,7 @@ jobs:
     name: ShellCheck
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: ShellCheck scripts and CLI
         run: |
@@ -31,7 +31,7 @@ jobs:
     steps:
       - name: Install tools
         run: dnf install -y git lua neovim vim-enhanced ShellCheck
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: bash -n + luac + CLI + nvim/vim load
         run: |
           set -euo pipefail
@@ -59,7 +59,7 @@ jobs:
     name: Packaging permission sanity
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Only CLI/scripts should be executable in git
         run: |
           set -euo pipefail
