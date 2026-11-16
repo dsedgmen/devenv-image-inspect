@@ -18,7 +18,7 @@ jobs:
       - name: Install build tools
         run: dnf install -y git rpm-build rpmdevtools
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
